@@ -169,7 +169,7 @@ def extract_siglip2_features(
     return torch.stack(per_layer, dim=1)  # [B, Ls, Ds]
 
 
-def compute_cknna_matrix(
+def compute_cknna_layerwise(
     penguin_feats: torch.Tensor,  # [N, Lp, Dp]
     siglip_feats: torch.Tensor,   # [N, Ls, Ds]
     topk: int,
@@ -181,18 +181,41 @@ def compute_cknna_matrix(
 
     lp = penguin_feats.shape[1]
     ls = siglip_feats.shape[1]
-    scores = np.zeros((lp, ls), dtype=np.float32)
+    compared_layers = min(lp, ls)
+    scores = np.zeros((compared_layers,), dtype=np.float32)
 
-    for i in tqdm(range(lp), desc="CKNNA rows"):
-        for j in range(ls):
-            score = AlignmentMetrics.cknna(
-                penguin_feats[:, i, :],
-                siglip_feats[:, j, :],
-                topk=topk,
-            )
-            scores[i, j] = float(score)
+    for layer_idx in tqdm(range(compared_layers), desc="CKNNA layerwise"):
+        score = AlignmentMetrics.cknna(
+            penguin_feats[:, layer_idx, :],
+            siglip_feats[:, layer_idx, :],
+            topk=topk,
+        )
+        scores[layer_idx] = float(score)
 
     return scores
+
+
+def save_layerwise_plot(scores: np.ndarray, out_path: Path) -> bool:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print(
+            "Could not import matplotlib. Install it with `pip install matplotlib` "
+            "to save the layerwise plot."
+        )
+        return False
+
+    x = np.arange(scores.shape[0], dtype=np.int32)
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+    ax.plot(x, scores, marker="o", linewidth=1.8)
+    ax.set_xlabel("Layer idx")
+    ax.set_ylabel("Similarity score")
+    ax.set_title("CKNNA: Penguin vs SigLIP2 (layer-by-layer)")
+    ax.grid(True, alpha=0.3, linewidth=0.7)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return True
 
 
 def main():
@@ -258,24 +281,37 @@ def main():
     siglip2_feats = F.normalize(siglip2_feats, dim=-1)
 
     effective_topk = min(args.topk, penguin_feats.shape[0] - 1)
-    scores = compute_cknna_matrix(penguin_feats, siglip2_feats, effective_topk)
+    scores = compute_cknna_layerwise(penguin_feats, siglip2_feats, effective_topk)
+    best_layer = int(np.nanargmax(scores))
 
-    best_i, best_j = np.unravel_index(np.nanargmax(scores), scores.shape)
-    breakpoint()
+    plot_path = out_dir / "cknna_layerwise.png"
+    plot_created = save_layerwise_plot(scores, plot_path)
+    scores_path = out_dir / "cknna_layerwise.npy"
 
     summary = {
         "num_images": int(penguin_feats.shape[0]),
         "topk": int(effective_topk),
         "penguin_layers": int(penguin_feats.shape[1]),
         "siglip2_layers": int(siglip2_feats.shape[1]),
-        "best_score": float(scores[best_i, best_j]),
-        "best_penguin_layer": int(best_i),
-        "best_siglip2_layer": int(best_j),
-        "final_vs_final_score": float(scores[-1, -1]),
+        "compared_layers": int(scores.shape[0]),
+        "best_score": float(scores[best_layer]),
+        "best_layer_idx": int(best_layer),
+        "last_layer_score": float(scores[-1]),
+        "score_type": "layer_by_layer_cknna",
         "drop_embedding_layer": bool(args.drop_embedding_layer),
+        "plot_created": bool(plot_created),
+        "plot_path": str(plot_path) if plot_created else None,
+        "layer_scores_path": str(scores_path),
     }
 
-    np.save(out_dir / "cknna_matrix.npy", scores)
+    np.save(scores_path, scores)
+    np.savetxt(
+        out_dir / "cknna_layerwise.csv",
+        np.column_stack((np.arange(scores.shape[0]), scores)),
+        delimiter=",",
+        header="layer_idx,similarity_score",
+        comments="",
+    )
 
     with open(out_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -285,7 +321,10 @@ def main():
             f.write(str(p) + "\n")
 
     print(json.dumps(summary, indent=2))
-    print(f"Saved matrix to: {out_dir / 'cknna_matrix.npy'}")
+    print(f"Saved layerwise scores to: {scores_path}")
+    print(f"Saved layerwise CSV to: {out_dir / 'cknna_layerwise.csv'}")
+    if plot_created:
+        print(f"Saved layerwise plot to: {plot_path}")
     print(f"Saved summary to: {out_dir / 'summary.json'}")
 
 

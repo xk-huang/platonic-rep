@@ -10,3 +10,4 @@ timm
 accelerate
 sentencepiece
 protobuf
+matplotlib
