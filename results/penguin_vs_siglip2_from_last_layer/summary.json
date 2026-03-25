@@ -1,0 +1,19 @@
+{
+  "num_images": 10000,
+  "topk": 10,
+  "penguin_layers": 28,
+  "siglip2_layers": 27,
+  "compared_layers": 27,
+  "comparison_direction": "last_to_first",
+  "best_score": 0.3875317871570587,
+  "best_step": 0,
+  "best_penguin_layer_idx": 27,
+  "best_siglip2_layer_idx": 26,
+  "last_layer_score": 0.10208342224359512,
+  "score_type": "layer_by_layer_cknna",
+  "drop_embedding_layer": true,
+  "from_last_layer": true,
+  "plot_created": true,
+  "plot_path": "results/penguin_vs_siglip2_from_last_layer/cknna_layerwise.png",
+  "layer_scores_path": "results/penguin_vs_siglip2_from_last_layer/cknna_layerwise.npy"
+}
