@@ -39,6 +39,11 @@ def parse_args():
         action="store_true",
         help="Drop layer 0 (embedding output) from both models before scoring",
     )
+    p.add_argument(
+        "--from-last-layer",
+        action="store_true",
+        help="Compare layer pairs from last to first (instead of first to last)",
+    )
     return p.parse_args()
 
 
@@ -173,7 +178,8 @@ def compute_cknna_layerwise(
     penguin_feats: torch.Tensor,  # [N, Lp, Dp]
     siglip_feats: torch.Tensor,   # [N, Ls, Ds]
     topk: int,
-) -> np.ndarray:
+    from_last_layer: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     n = penguin_feats.shape[0]
     topk = min(topk, n - 1)
     if topk < 2:
@@ -184,18 +190,31 @@ def compute_cknna_layerwise(
     compared_layers = min(lp, ls)
     scores = np.zeros((compared_layers,), dtype=np.float32)
 
-    for layer_idx in tqdm(range(compared_layers), desc="CKNNA layerwise"):
+    if from_last_layer:
+        penguin_layer_indices = np.arange(lp - 1, lp - compared_layers - 1, -1, dtype=np.int32)
+        siglip2_layer_indices = np.arange(ls - 1, ls - compared_layers - 1, -1, dtype=np.int32)
+    else:
+        penguin_layer_indices = np.arange(compared_layers, dtype=np.int32)
+        siglip2_layer_indices = np.arange(compared_layers, dtype=np.int32)
+
+    for out_idx in tqdm(range(compared_layers), desc="CKNNA layerwise"):
+        penguin_idx = int(penguin_layer_indices[out_idx])
+        siglip2_idx = int(siglip2_layer_indices[out_idx])
         score = AlignmentMetrics.cknna(
-            penguin_feats[:, layer_idx, :],
-            siglip_feats[:, layer_idx, :],
+            penguin_feats[:, penguin_idx, :],
+            siglip_feats[:, siglip2_idx, :],
             topk=topk,
         )
-        scores[layer_idx] = float(score)
+        scores[out_idx] = float(score)
 
-    return scores
+    return scores, penguin_layer_indices, siglip2_layer_indices
 
 
-def save_layerwise_plot(scores: np.ndarray, out_path: Path) -> bool:
+def save_layerwise_plot(
+    scores: np.ndarray,
+    x_layer_indices: np.ndarray,
+    out_path: Path,
+) -> bool:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -205,13 +224,14 @@ def save_layerwise_plot(scores: np.ndarray, out_path: Path) -> bool:
         )
         return False
 
-    x = np.arange(scores.shape[0], dtype=np.int32)
     fig, ax = plt.subplots(figsize=(8, 4.8))
-    ax.plot(x, scores, marker="o", linewidth=1.8)
+    ax.plot(x_layer_indices, scores, marker="o", linewidth=1.8)
     ax.set_xlabel("Layer idx")
     ax.set_ylabel("Similarity score")
     ax.set_title("CKNNA: Penguin vs SigLIP2 (layer-by-layer)")
     ax.grid(True, alpha=0.3, linewidth=0.7)
+    if x_layer_indices.shape[0] >= 2 and x_layer_indices[0] > x_layer_indices[-1]:
+        ax.set_xlim(int(x_layer_indices[0]), int(x_layer_indices[-1]))
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
@@ -281,11 +301,16 @@ def main():
     siglip2_feats = F.normalize(siglip2_feats, dim=-1)
 
     effective_topk = min(args.topk, penguin_feats.shape[0] - 1)
-    scores = compute_cknna_layerwise(penguin_feats, siglip2_feats, effective_topk)
-    best_layer = int(np.nanargmax(scores))
+    scores, penguin_layer_indices, siglip2_layer_indices = compute_cknna_layerwise(
+        penguin_feats,
+        siglip2_feats,
+        effective_topk,
+        from_last_layer=args.from_last_layer,
+    )
+    best_step = int(np.nanargmax(scores))
 
     plot_path = out_dir / "cknna_layerwise.png"
-    plot_created = save_layerwise_plot(scores, plot_path)
+    plot_created = save_layerwise_plot(scores, penguin_layer_indices, plot_path)
     scores_path = out_dir / "cknna_layerwise.npy"
 
     summary = {
@@ -294,11 +319,15 @@ def main():
         "penguin_layers": int(penguin_feats.shape[1]),
         "siglip2_layers": int(siglip2_feats.shape[1]),
         "compared_layers": int(scores.shape[0]),
-        "best_score": float(scores[best_layer]),
-        "best_layer_idx": int(best_layer),
+        "comparison_direction": "last_to_first" if args.from_last_layer else "first_to_last",
+        "best_score": float(scores[best_step]),
+        "best_step": int(best_step),
+        "best_penguin_layer_idx": int(penguin_layer_indices[best_step]),
+        "best_siglip2_layer_idx": int(siglip2_layer_indices[best_step]),
         "last_layer_score": float(scores[-1]),
         "score_type": "layer_by_layer_cknna",
         "drop_embedding_layer": bool(args.drop_embedding_layer),
+        "from_last_layer": bool(args.from_last_layer),
         "plot_created": bool(plot_created),
         "plot_path": str(plot_path) if plot_created else None,
         "layer_scores_path": str(scores_path),
@@ -307,9 +336,16 @@ def main():
     np.save(scores_path, scores)
     np.savetxt(
         out_dir / "cknna_layerwise.csv",
-        np.column_stack((np.arange(scores.shape[0]), scores)),
+        np.column_stack(
+            (
+                np.arange(scores.shape[0], dtype=np.int32),
+                penguin_layer_indices,
+                siglip2_layer_indices,
+                scores,
+            )
+        ),
         delimiter=",",
-        header="layer_idx,similarity_score",
+        header="step_idx,penguin_layer_idx,siglip2_layer_idx,similarity_score",
         comments="",
     )
 

@@ -27,3 +27,13 @@ python compare_cknna_penguin_siglip2.py \
   --batch-size 32 \
   --topk 10 \
   --drop-embedding-layer
+
+
+ python compare_cknna_penguin_siglip2.py \
+  --images ../tmp/extracted_images \
+  --out results/penguin_vs_siglip2_from_last_layer \
+  --max-images 10000 \
+  --batch-size 32 \
+  --topk 10 \
+  --drop-embedding-layer \
+  --from-last-layer
