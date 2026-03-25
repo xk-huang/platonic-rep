@@ -1,0 +1,15 @@
+{
+  "num_images": 10000,
+  "topk": 10,
+  "penguin_layers": 28,
+  "siglip2_layers": 27,
+  "compared_layers": 27,
+  "best_score": 0.3632641136646271,
+  "best_layer_idx": 26,
+  "last_layer_score": 0.3632641136646271,
+  "score_type": "layer_by_layer_cknna",
+  "drop_embedding_layer": true,
+  "plot_created": true,
+  "plot_path": "results/penguin_vs_siglip2/cknna_layerwise.png",
+  "layer_scores_path": "results/penguin_vs_siglip2/cknna_layerwise.npy"
+}
