@@ -1,10 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
 torch>=2.1.2
 torchvision
 torchaudio
 tqdm
 datasets
 scikit-learn
-transformers
+transformers==4.51.3
 timm
 accelerate
 sentencepiece
